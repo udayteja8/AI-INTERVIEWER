@@ -2,9 +2,8 @@ from flask import Blueprint, request, jsonify
 from services.resume_parser import extract_text
 import os
 from services.skill_extractor import extract_skills
-
 from models.interview_model import interviews_collection
-
+from datetime import datetime
 
 from services.llm_service import (
     analyze_resume,
@@ -115,15 +114,15 @@ def save_interview():
 
     interview = {
         "user_email": data["user_email"],
-        "analysis": data["analysis"],
-        "questions": data["questions"],
-        "answers": data["answers"],
-        "report": data["report"]
+        "analysis": data.get("analysis"),
+        "questions": data.get("questions"),
+        "answers": data.get("answers"),
+        "report": data.get("report"),
+        "videoUrl": data.get("videoUrl"),
+        "created_at": datetime.utcnow()  # ADDED: Store real date
     }
 
-    result = interviews_collection.insert_one(
-        interview
-    )
+    result = interviews_collection.insert_one(interview)
 
     return jsonify({
         "message": "Interview saved",
@@ -138,10 +137,16 @@ def interview_history(email):
 
     interviews = list(
         interviews_collection.find(
-            {"user_email": email},
-            {"_id": 0}
+            {"user_email": email}
         )
     )
+    
+    # Convert ObjectId to string for JSON serialization
+    for interview in interviews:
+        interview["_id"] = str(interview["_id"])
+        # Convert datetime to string if needed
+        if "created_at" in interview and hasattr(interview["created_at"], "isoformat"):
+            interview["created_at"] = interview["created_at"].isoformat()
 
     return jsonify(interviews)
 
@@ -220,7 +225,8 @@ def start_interview():
         "questions": data["questions"],
         "current_question": 0,
         "answers": [],
-        "scores": []
+        "scores": [],
+        "created_at": datetime.utcnow()  # ADDED
     }
 
     interviews_collection.insert_one(session)
@@ -228,6 +234,7 @@ def start_interview():
     return jsonify({
         "message": "Interview Started"
     })
+
 @interview_bp.route("/followup-question", methods=["POST"])
 def followup_question():
     data = request.json
@@ -250,8 +257,6 @@ def generate_topic_questions():
         if not topic:
             return jsonify({"error": "Topic is required"}), 400
         
-        # Create a minimal analysis object for the topic
-        # This matches what generate_resume_questions expects
         topic_analysis = {
             "summary": f"Candidate interested in {topic}",
             "skills": [topic],
@@ -260,14 +265,12 @@ def generate_topic_questions():
             "interview_areas": [topic]
         }
         
-        # Use the existing function with proper format
         questions = generate_resume_questions(topic_analysis)
         
         return jsonify(questions)
         
     except Exception as e:
         print(f"Error generating topic questions: {e}")
-        # Fallback questions if AI fails
         return jsonify({
             "questions": [
                 {
